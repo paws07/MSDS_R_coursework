@@ -1,0 +1,184 @@
+---
+title: "NYPD Shootings EDA"
+author: "Swapnil Bhatta"
+date: "2022-11-15"
+output:
+  pdf_document: default
+  html_document: default
+---
+```{r Install of Packages, include = FALSE}
+
+#!!!READ  BEFORE RUNNING: Comment out below install of packages if you don't want them installed through this method. Only completed to ensure the document would knit first try.
+
+#if(!require(tidyverse)) install.packages("tidyverse",repos = "http://cran.us.r-project.org")
+
+#if(!require(lubridate)) install.packages("lubridate",repos = "http://cran.us.r-project.org")
+
+```
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+```
+
+## How to get the data
+
+Navigate to the dataset link https://catalog.data.gov/dataset and search for a dataset titled NYPD Shooting Incident Data (Historic). The repo has the csv file, but the script  automatically downloadeds it from the website when ran.
+
+```{r read data, message = FALSE}
+nypd_url <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+police_shootings <- read.csv(nypd_url,
+                             header=TRUE,
+                             sep=",")
+```
+
+```{r Summary}
+summary(police_shootings)
+```
+## What cleaning process was used? 
+- Changed the type for OCCUR_DATE to date
+- Removed unwanted columns
+
+
+```{r Data select}
+# Remove unwanted columns
+police_shootings <- select(police_shootings, -c(LOCATION_DESC, STATISTICAL_MURDER_FLAG, PERP_AGE_GROUP, X_COORD_CD, Y_COORD_CD, Lon_Lat))
+```
+
+
+```{r Date add column}
+# Convert string to datetime
+police_shootings$ OCCUR_DATE <- mdy(police_shootings$ OCCUR_DATE)
+```
+
+## Daily frequency of shootings
+
+
+```{r Data further Preprocess}
+# Add columns for monthly, yearly averages
+police_shootings <- police_shootings %>% 
+    mutate(YEAR_MONTH = floor_date(police_shootings$ OCCUR_DATE, 'month')) %>% 
+    mutate(MONTH = strftime(police_shootings$ OCCUR_DATE, format='%m'))
+```
+
+
+```{r Incidents plot}
+date_value_counts <- police_shootings %>% count(YEAR_MONTH)
+ggplot(date_value_counts, aes(x=YEAR_MONTH, y=n)) +
+                        geom_line(color = "cornflowerblue", size=1) +
+                        labs(x = "Date", y = "Number of Incidents", title='Shooting Incidents - Time Series')
+```
+
+```{r Incidents narrow}
+# Checking if some incidents are reported additional times for multiple shootings
+incident_counts <- police_shootings %>% count(INCIDENT_KEY) 
+incident_counts[order(incident_counts$ n, decreasing = TRUE),] %>% head(10)
+```
+
+We see that an incident can have multiple data points, plotting only unique counts confirms that there might've been some outliers 
+
+
+```{r Incidents narrow Plot}
+distinct_year_month <- police_shootings %>% group_by(YEAR_MONTH) %>%
+                    summarize(distinct_incident = n_distinct(INCIDENT_KEY))
+ggplot(distinct_year_month, aes(x=YEAR_MONTH, y=distinct_incident)) + 
+                geom_line(color = "darkorange1") +
+                labs(x = "Date", y = "Number of Distinct Incidents", title='Distinct Shooting Incidents - Time Series')  
+```
+
+Visualizing overlap of incidents
+
+
+```{r Overlap visualization}
+ggplot(date_value_counts, aes(x=YEAR_MONTH, y=n)) + 
+                        geom_line(color = "cornflowerblue") + 
+                        geom_line(data = distinct_year_month, aes(x=YEAR_MONTH, y=distinct_incident), color = "darkorange1") +
+                    labs(x = "Date", y = "Number of Incidents", title='Shooting Incident Overlaps - Time Series') 
+```
+
+
+Hourly breakdown for shooting incidents
+
+
+```{r Distinct hours selection}
+distinct_hours <- police_shootings %>% group_by(OCCUR_TIME) %>%
+                    summarize(distinct_incident = n_distinct(INCIDENT_KEY))
+ggplot(distinct_hours, aes(x=OCCUR_TIME,
+                              y=distinct_incident)) + geom_line(color = "blue")+
+                    labs(x = "Date", y = "Number of Incidents", title='Shooting Incident Overlaps - Time Series')+
+                    labs(x = "Time (Hour)", y = "Number of Incidents", title='Shooting Incident - Hourly Time Series') 
+```
+
+
+Most shooting incidents take place after hours, between 8 PM and 4 AM
+
+```{r distinct hours plot}
+distinct_lat_long <- police_shootings %>% group_by(Latitude, Longitude, BORO) %>%
+                    summarize(distinct_incident = n_distinct(INCIDENT_KEY))
+
+ggplot(distinct_lat_long, aes(x=Latitude, y=Longitude, color=BORO)) + 
+        geom_point(aes(size=distinct_incident)) +
+        geom_point(shape = 1, aes(size=distinct_incident), alpha = 0.1, colour = "black") +
+                    labs(x = "Latitude", y = "Longitude", title='Scatter Plot Showing NYC Boroughs, Incidents') 
+```
+
+
+We can visualize the approximate location of boroughs and the size of incidents for various locations
+
+
+```{r gender data selection}
+distinct_gender <- police_shootings %>% group_by(VIC_SEX) %>%
+                    summarize(distinct_incident = n_distinct(INCIDENT_KEY))
+ggplot(distinct_gender, aes(x="", y=distinct_incident, fill=VIC_SEX, label = distinct_incident)) + 
+                geom_bar(stat="identity", width=1, color="white") +
+                          coord_polar("y", start=0) + theme_void() +
+                geom_text(aes(label = distinct_incident), position = position_stack(vjust = 0.5), size=5) +
+                    labs(title='Gender Breakdown for Incidents') 
+```
+
+
+## Add a linear model to see if number of shootings have been increasing
+
+
+```{r linear model}
+linear_incidents = lm(distinct_incident~YEAR_MONTH, data=distinct_year_month)
+```
+
+
+```{r linear model plot}
+ggplot(distinct_year_month, aes(x=YEAR_MONTH,
+                                y=distinct_incident, group = 1)) + 
+                                geom_line(color = "darkorange1") +
+                                geom_smooth(method='lm', se = FALSE) +
+                    labs(x = "Date", y = "Number of Distinct Incidents", title='Distinct Shooting Incidents with Linear Fit') 
+```
+
+The linear model suggests the number of shooting has decreased
+
+
+```{r linear summary}
+summary(linear_incidents)
+```
+
+
+The R value suggests a poor fit, which is expected given the seasonality in the data and the outlier for the pandemic years.
+
+
+```{r monthly select}
+distinct_monthly <- police_shootings %>% group_by(MONTH) %>%
+                                summarize(distinct_incident = n_distinct(INCIDENT_KEY))
+ggplot(distinct_monthly, aes(x=MONTH,
+                                y=distinct_incident, group = 1)) + 
+                                geom_line(color = "darkorange1") +
+                    labs(x = "Month", y = "Number of Distinct Incidents", title='Distinct Shooting Incidents Aggregated Monthly') 
+```
+
+
+Summer months have the highest number of shootings.
+
+## Possible Bias
+
+The collected data itself can be biased due to higher police presence and incidents in communities that have predominantly minority population, further exploration of the PERP_RACE fields and understanding of New York City's racial distribution areas can help shed more light into it.
+

@@ -1,0 +1,177 @@
+---
+title: "Covid Data Analysis"
+author: "Swapnil Bhatta"
+date: "2022-12-01"
+output:
+  html_document: default
+  pdf_document: default
+---
+```{r Install of Packages, include = FALSE}
+
+#!!!READ  BEFORE RUNNING: Comment out below install of packages if you don't want them installed through this method. Only completed to ensure the document would knit first try.
+
+#if(!require(tidyverse)) install.packages("tidyverse",repos = "http://cran.us.r-project.org")
+
+#if(!require(lubridate)) install.packages("lubridate",repos = "http://cran.us.r-project.org")
+
+```
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+```
+## Data Retrieval and Description
+
+JHU CSSE COVID-19 Dataset is present in their github repo -> https://github.com/CSSEGISandData/COVID-19/tree/master/csse_covid_19_data
+
+The data contains daily case reports for COVID data both throughout the world and specifically for US states. All time stamps are in UTC (GMT+0) and the data is updated daily. A detailed description of the columns present are given in the repo itself along with any flags and data collecting methodologies.
+
+
+```{r create urls}
+github_url <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+
+file_names <- c("time_series_covid19_confirmed_global.csv",
+                "time_series_covid19_deaths_global.csv",
+                "time_series_covid19_confirmed_US.csv",
+                "time_series_covid19_deaths_US.csv")
+
+urls <- str_c(github_url, file_names)
+```
+
+The URLs will be read into data frames one at a time, and then pivoted to tidy up the fields.
+
+
+```{r US confirmed}
+US_confirmed <- read_csv(urls[3]) %>%
+    pivot_longer(cols = -(UID:Combined_Key), names_to = "Date", values_to = "Confirmed_cases") %>%
+    select(Admin2:Confirmed_cases) %>%
+    mutate(Date = mdy(Date))
+```
+
+```{r US deaths}
+US_deaths <- read_csv(urls[4]) %>%
+    pivot_longer(cols = -(UID:Population), names_to = "Date", values_to ="Deaths") %>%
+    select(Admin2:Deaths) %>%
+    mutate(Date = mdy(Date))
+```
+We now join the cases and deaths in the US
+
+```{r us join}
+US <-  US_deaths %>%
+    full_join(US_confirmed, 
+              by = c("Combined_Key", "Date", 
+                   "Admin2", "Province_State", 
+                   "Country_Region")) %>%
+    rename(Long = Long_.x, Lat = Lat.x)  %>%
+    select(Admin2, Province_State, Country_Region, 
+           Lat, Long, Population, Date, Confirmed_cases, Deaths)
+```
+
+## Statement of Interest
+
+We wish to look at the number of cases and deaths in Colorado, US. We also want to show the top 10 counties in the state with the highest number of confirmed cases to date.
+
+
+```{r colorado filtered}
+# Filter out Colorado Data
+colorado <- US %>% filter(Province_State == "Colorado") %>%
+  select(Admin2, Lat, Long, Province_State, Date, Confirmed_cases, Deaths)
+```
+
+
+```{r colorado summary}
+summary(colorado)
+```
+
+We see that the minimum and maximum Lat and Long values are wrong. A lat and long of (0, 0) would not be in Colorado, US. These will be filtered out.
+
+
+```{r colorado cleanup}
+colorado <- colorado %>% filter(Lat != 0 | Long != 0)
+```
+
+Top Counties with Deaths
+
+
+```{r top counties}
+colorado_top <- colorado %>% group_by(Admin2) %>%
+            summarize(Confirmed_cases = max(Confirmed_cases),
+                      Deaths = max(Deaths)) %>%
+            ungroup() %>% 
+            arrange(desc(Confirmed_cases)) %>%
+            slice(1:10)
+
+ggplot(data=colorado_top, aes(x=reorder(Admin2, -Confirmed_cases), y=Confirmed_cases)) +
+     geom_bar(stat="identity", fill="steelblue") +
+     labs(x = "County Name", y = "Number of Confirmed Cases", title='Counties with total covid cases')
+```
+
+We now look at the total number of deaths for the state
+
+
+```{r total deaths}
+ggplot(colorado, aes(x=Date, y=Deaths)) +
+            geom_line(color = "cornflowerblue", linewidth=1) +
+            labs(x = "Date", y = "Number of Incidents", title='Total Deaths in Colorado')
+```
+
+We can use a lag difference to generate just the new cases (both confirmed cases and death values)
+
+
+```{r total aggregated}
+colorado_aggregated <- colorado %>% group_by(Date) %>%
+                        summarize(Confirmed_cases = max(Confirmed_cases),
+                                  Deaths = max(Deaths)) %>%
+                        ungroup() %>%
+                        mutate(new_cases = Confirmed_cases - lag(Confirmed_cases)) %>%
+                        mutate(new_deaths = Deaths - lag(Deaths))
+
+# First day lag is NA
+colorado_aggregated <-  colorado_aggregated[-1,]
+```
+
+
+```{r new deaths}
+#New Deaths
+ggplot(colorado_aggregated, aes(x=Date, y=new_deaths)) +
+            geom_line(color = "cornflowerblue", linewidth=1) +
+            labs(x = "Date", y = "Number of Incidents", title='Total Deaths in Colorado')
+```
+
+```{r new cases viz}
+#New Cases
+ggplot(colorado_aggregated, aes(x=Date, y=new_cases)) +
+            geom_line(color = "cornflowerblue") +
+            labs(x = "Date", y = "Number of Cases", title='New Cases in Colorado')
+```
+
+Fitting a linear model to the number of deaths
+
+
+```{r linear plot}
+linear_deaths = lm(Deaths~Date, data=colorado_aggregated)
+ggplot(colorado_aggregated, aes(x=Date,
+                                y=Deaths, group = 1)) + 
+                                geom_line(color = "darkorange1") +
+                                geom_smooth(method='lm', se = TRUE) +
+                    labs(x = "Date", y = "Number of Incidents", title='Total Deaths in Colorado')
+```
+
+
+```{r linear summary}
+summary(linear_deaths)
+```
+
+
+The linear model suggests the number of deaths are increasing linearly. The R value however suggests a poor fit, which is expected given the increase in the number of deaths is not linear.
+
+Looking at only new cases
+
+## Conclusion, Sources of bias
+
+In conclusion, we were able to identify the top five counties and visualize the overall count of covid cases in the state.
+
+At the beginning of the pandemic the data, testing was limited to people with severe symptoms. This affects the number of new cases being counted everyday during the early stages of the pandemic. The overall reporting methodology by the counties also added bias as some reported data aggregated over the last week rather than a daily update.
+
