@@ -25,7 +25,7 @@ library(lubridate)
 
 ## How to get the data
 
-Navigate to the dataset link https://catalog.data.gov/dataset and search for a dataset titled NYPD Shooting Incident Data (Historic). The repo has the csv file, but the script  automatically downloadeds it from the website when ran.
+Navigate to the dataset link https://catalog.data.gov/dataset and search for a dataset titled NYPD Shooting Incident Data (Historic). The repo has the csv file, but the script  automatically downloads it from the website when ran.
 
 ```{r read data, message = FALSE}
 nypd_url <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
